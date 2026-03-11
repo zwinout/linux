@@ -1,0 +1,92 @@
+diff --git a/drivers/platform/x86/hp/hp-wmi.c b/drivers/platform/x86/hp/hp-wmi.c
+index 304d9ac63c8a..4d6a176cc5b9 100644
+--- a/drivers/platform/x86/hp/hp-wmi.c
++++ b/drivers/platform/x86/hp/hp-wmi.c
+@@ -146,6 +146,7 @@ static const char * const omen_thermal_profile_boards[] = {
+ 	"8900", "8901", "8902", "8912", "8917", "8918", "8949", "894A", "89EB",
+ 	"8A15", "8A42",
+ 	"8BAD",
++	"8C58",
+ };
+ 
+ /* DMI Board names of Omen laptops that are specifically set to be thermal
+@@ -676,6 +677,65 @@ static int hp_wmi_get_tablet_mode(void)
+ 	return system_device_mode[0] == DEVICE_MODE_TABLET;
+ }
+ 
++struct omen_gpu_power_modes {
++	u8 ctgp_enable;
++	u8 ppab_enable;
++	u8 dstate;
++	u8 gpu_slowdown_temp;
++};
++
++static int omen_gpu_thermal_profile_get(bool *ctgp_enable,
++					    bool *ppab_enable,
++					    u8 *dstate,
++					    u8 *gpu_slowdown_temp)
++{
++	struct omen_gpu_power_modes gpu_power_modes;
++	int ret;
++
++	ret = hp_wmi_perform_query(HPWMI_GET_GPU_THERMAL_MODES_QUERY, HPWMI_GM,
++				   &gpu_power_modes, sizeof(gpu_power_modes),
++				   sizeof(gpu_power_modes));
++	if (ret == 0) {
++		*ctgp_enable = gpu_power_modes.ctgp_enable ? true : false;
++		*ppab_enable = gpu_power_modes.ppab_enable ? true : false;
++		*dstate = gpu_power_modes.dstate;
++		*gpu_slowdown_temp = gpu_power_modes.gpu_slowdown_temp;
++	}
++
++	return ret;
++}
++
++static int omen_gpu_thermal_profile_set(bool ctgp_enable,
++					    bool ppab_enable,
++					    u8 dstate)
++{
++	struct omen_gpu_power_modes gpu_power_modes;
++	int ret;
++
++	bool current_ctgp_state, current_ppab_state;
++	u8 current_dstate, current_gpu_slowdown_temp;
++
++	/* Retrieving GPU slowdown temperature, in order to keep it unchanged */
++	ret = omen_gpu_thermal_profile_get(&current_ctgp_state,
++					       &current_ppab_state,
++					       &current_dstate,
++					       &current_gpu_slowdown_temp);
++	if (ret < 0) {
++		pr_warn("GPU modes not updated, unable to get slowdown temp\n");
++		return ret;
++	}
++
++	gpu_power_modes.ctgp_enable = ctgp_enable ? 0x01 : 0x00;
++	gpu_power_modes.ppab_enable = ppab_enable ? 0x01 : 0x00;
++	gpu_power_modes.dstate = dstate;
++	gpu_power_modes.gpu_slowdown_temp = current_gpu_slowdown_temp;
++
++	ret = hp_wmi_perform_query(HPWMI_SET_GPU_THERMAL_MODES_QUERY, HPWMI_GM,
++				   &gpu_power_modes, sizeof(gpu_power_modes), 0);
++
++	return ret;
++}
++
+ static int omen_thermal_profile_set(int mode)
+ {
+ 	/* The Omen Control Center actively sets the first byte of the buffer to
+@@ -691,6 +751,13 @@ static int omen_thermal_profile_set(int mode)
+ 	if (ret)
+ 		return ret < 0 ? ret : -EINVAL;
+ 
++	if (mode == HP_OMEN_V1_THERMAL_PROFILE_PERFORMANCE ||
++	    mode == HP_OMEN_V0_THERMAL_PROFILE_PERFORMANCE) {
++		omen_gpu_thermal_profile_set(true, true, 1);
++	} else {
++		omen_gpu_thermal_profile_set(false, true, 1);
++	}
++
+ 	return mode;
+ }
+ 
